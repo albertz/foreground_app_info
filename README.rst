@@ -34,4 +34,20 @@ Examples::
      'url': 'file:///Users/az/Documents/todo-musicplayer.txt',
      'windowTitle': 'todo-musicplayer.txt'}
     
+
+This project is registered on `Pypi <https://pypi.python.org/pypi/foreground_app_info>`_.
+You can install it via::
+
+    $ pip install foreground_app_info
+
+Simple demo code:
+
+.. code-block:: python
+
+    from foreground_app_info import get_app_info
+    from pprint import pprint
+    
+    pprint(get_app_info())
+    
+
 This is currently used by `TimeCapture <https://github.com/albertz/timecapture>`_.
