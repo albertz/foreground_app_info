@@ -9,9 +9,7 @@ setup(
 	name = 'foreground_app_info',
 	version = time.strftime("1.%Y%m%d.%H%M%S", time.gmtime()),
 	packages = ['foreground_app_info'],
-	package_dir = {'foreground_app_info': ''},
-	package_data = {'': ['mac/*', 'mac/*/*']},
-	
+	package_dir = {'foreground_app_info': ''},	
 	description = 'Get details about the application and opened URL which is in foreground',
 	author = 'Albert Zeyer',
 	author_email = 'albzey@gmail.com',
