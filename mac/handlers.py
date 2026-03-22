@@ -7,7 +7,7 @@ import sqlite3
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 import AppKit
 import ScriptingBridge
@@ -531,6 +531,66 @@ def get_steam_url() -> Optional[str]:
     return result
 
 
+def get_kitty_url(app_name: str, window_title: str) -> Optional[str]:
+    """
+    Retrieves the current working directory of the frontmost Kitty window.
+
+    :param app_name: The name of the application.
+    :param window_title: The current window title.
+    :return: The file URL as a string, or None if not found.
+    """
+    bundle_id = "net.kovidgoyal.kitty"
+    if not is_app_running(bundle_id):
+        return None
+
+    # Kitty is not scriptable, so we find its child shell processes.
+    workspace = AppKit.NSWorkspace.sharedWorkspace()
+    kitty_pid = None
+    for app in workspace.runningApplications():
+        if app.bundleIdentifier() == bundle_id:
+            kitty_pid = app.processIdentifier()
+            break
+    
+    if not kitty_pid:
+        return None
+
+    def _get_all_children_recursive(pid: int) -> List[int]:
+        res = subprocess.run(["pgrep", "-P", str(pid)], capture_output=True, text=True, check=False).stdout
+        pids = []
+        for p in res.splitlines():
+            p = p.strip()
+            if p.isdigit():
+                pids.append(int(p))
+        
+        all_pids = list(pids)
+        for p in pids:
+            all_pids.extend(_get_all_children_recursive(p))
+        return all_pids
+
+    child_pids = _get_all_children_recursive(kitty_pid)
+    for pid in child_pids:
+        # Check if this process is a shell
+        comm = subprocess.run(["ps", "-p", str(pid), "-o", "comm="], capture_output=True, text=True, check=False).stdout.strip()
+        if not comm:
+            continue
+        if any(shell in comm.lower() for shell in ["fish", "zsh", "bash", "sh"]):
+            # Get CWD of this shell
+            res = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-n", "-Fn"], capture_output=True, text=True, check=False).stdout
+            for line in res.splitlines():
+                if line.startswith("n"):
+                    cwd = line[1:]
+                    # Basic title matching: if window title is a suffix of CWD or vice versa
+                    # or if title is '~' and CWD is home
+                    if window_title == "~" and cwd == os.path.expanduser("~"):
+                        return "file://" + cwd
+                    if window_title in cwd or cwd in window_title:
+                        return "file://" + cwd
+                    # Fallback: just return the first shell CWD found
+                    return "file://" + cwd
+
+    return None
+
+
 HANDLERS = {
     "Google Chrome": get_chrome_url,
     "Safari": get_safari_url,
@@ -555,4 +615,6 @@ HANDLERS = {
     "Slack": get_slack_url,
     "Spotify": get_spotify_url,
     "Steam": get_steam_url,
+    "kitty": get_kitty_url,
+    "Kitty": get_kitty_url,
 }
