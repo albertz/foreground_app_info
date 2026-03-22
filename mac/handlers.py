@@ -257,49 +257,48 @@ def get_jetbrains_url(app_name: str, window_title: str) -> Optional[str]:
         recent_projects_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
 
         for recent_projects_file in recent_projects_files:
-            try:
-                tree = ET.parse(recent_projects_file)
-                root = tree.getroot()
-                for entry in root.findall(".//entry"):
-                    key = entry.get("key")
-                    if not key:
-                        continue
-
-                    # Check if it's the opened project
-                    value = entry.find("value")
-                    if value is not None:
-                        meta = value.find("RecentProjectMetaInfo")
-                        if meta is not None and meta.get("opened") == "true":
-                            project_path = key.replace("$USER_HOME$", os.path.expanduser("~"))
-                            if os.path.basename(project_path) == project_name:
-                                # Found the project path
-                                # Try to find the actual file by appending file_part
-                                potential_path = os.path.join(project_path, file_part)
-                                if os.path.exists(potential_path):
-                                    path = potential_path
-                                    break
-                                
-                                # If file_part is a path relative to project
-                                # (JetBrains sometimes shows it like that)
-                                potential_path = os.path.join(project_path, *file_part.split("/"))
-                                if os.path.exists(potential_path):
-                                    path = potential_path
-                                    break
-                                
-                                # Fallback: search for the filename in the project directory
-                                filename_only = os.path.basename(file_part)
-                                for root_dir, _, files in os.walk(project_path):
-                                    if filename_only in files:
-                                        path = os.path.join(root_dir, filename_only)
-                                        break
-                                
-                                if not path:
-                                    path = project_path
-                                break
-                if path:
-                    break
-            except (IOError, ET.ParseError):
+            if not os.path.isfile(recent_projects_file):
                 continue
+            tree = ET.parse(recent_projects_file)
+            root = tree.getroot()
+            for entry in root.findall(".//entry"):
+                key = entry.get("key")
+                if not key:
+                    continue
+
+                # Check if it's the opened project
+                value = entry.find("value")
+                if value is not None:
+                    meta = value.find("RecentProjectMetaInfo")
+                    if meta is not None and meta.get("opened") == "true":
+                        project_path = key.replace("$USER_HOME$", os.path.expanduser("~"))
+                        if os.path.basename(project_path) == project_name:
+                            # Found the project path
+                            # Try to find the actual file by appending file_part
+                            potential_path = os.path.join(project_path, file_part)
+                            if os.path.exists(potential_path):
+                                path = potential_path
+                                break
+                            
+                            # If file_part is a path relative to project
+                            # (JetBrains sometimes shows it like that)
+                            potential_path = os.path.join(project_path, *file_part.split("/"))
+                            if os.path.exists(potential_path):
+                                path = potential_path
+                                break
+                            
+                            # Fallback: search for the filename in the project directory
+                            filename_only = os.path.basename(file_part)
+                            for root_dir, _, files in os.walk(project_path):
+                                if filename_only in files:
+                                    path = os.path.join(root_dir, filename_only)
+                                    break
+                            
+                            if not path:
+                                path = project_path
+                            break
+            if path:
+                break
 
     if path:
         return "file://" + path
