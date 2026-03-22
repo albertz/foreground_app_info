@@ -179,20 +179,28 @@ def get_terminal_url() -> Optional[str]:
     :return: The file URL as a string, or None if not found or Terminal is not running.
     """
     terminal = get_running_app("com.apple.Terminal")
-    if terminal and terminal.windows():
-        front_window = terminal.windows()[0]
-        selected_tab = front_window.selectedTab()
-        tty = selected_tab.tty()
-        res = subprocess.check_output(["fuser", tty], stderr=subprocess.DEVNULL).decode("utf-8").strip()
-        pids = res.split()
-        if pids:
-            pid = pids[0]
-            cwd = subprocess.check_output(
-                ["lsof", "-a", "-p", pid, "-d", "cwd", "-n", "-Fn"], stderr=subprocess.DEVNULL
-            ).decode("utf-8")
-            for line in cwd.splitlines():
-                if line.startswith("n"):
-                    return "file://" + line[1:]
+    if not terminal or not terminal.windows():
+        return None
+
+    front_window = terminal.windows()[0]
+    selected_tab = front_window.selectedTab()
+    tty = selected_tab.tty()
+    if not tty:
+        return None
+
+    # Use check=True and let specific exceptions bubble up
+    # However, fuser returns non-zero if no process is found, which is expected
+    res = subprocess.run(["fuser", tty], capture_output=True, text=True, check=False).stdout.strip()
+    pids = res.split()
+    if pids:
+        pid = pids[0]
+        # lsof might also fail if process just exited
+        res = subprocess.run(
+            ["lsof", "-a", "-p", pid, "-d", "cwd", "-n", "-Fn"], capture_output=True, text=True, check=False
+        ).stdout
+        for line in res.splitlines():
+            if line.startswith("n"):
+                return "file://" + line[1:]
     return None
 
 
