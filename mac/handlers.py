@@ -172,24 +172,13 @@ def get_finder_url() -> Optional[str]:
     return None
 
 
-def get_terminal_url() -> Optional[str]:
+def _get_cwd_from_tty(tty: str) -> Optional[str]:
     """
-    Retrieves the current working directory of the frontmost Terminal tab as a file URL.
-
-    :return: The file URL as a string, or None if not found or Terminal is not running.
+    Retrieves the current working directory of the process using the given TTY.
     """
-    terminal = get_running_app("com.apple.Terminal")
-    if not terminal or not terminal.windows():
-        return None
-
-    front_window = terminal.windows()[0]
-    selected_tab = front_window.selectedTab()
-    tty = selected_tab.tty()
     if not tty:
         return None
-
-    # Use check=True and let specific exceptions bubble up
-    # However, fuser returns non-zero if no process is found, which is expected
+    # fuser returns non-zero if no process is found, which is expected
     res = subprocess.run(["fuser", tty], capture_output=True, text=True, check=False).stdout.strip()
     pids = res.split()
     if pids:
@@ -202,6 +191,42 @@ def get_terminal_url() -> Optional[str]:
             if line.startswith("n"):
                 return "file://" + line[1:]
     return None
+
+
+def get_terminal_url() -> Optional[str]:
+    """
+    Retrieves the current working directory of the frontmost Terminal tab as a file URL.
+
+    :return: The file URL as a string, or None if not found or Terminal is not running.
+    """
+    terminal = get_running_app("com.apple.Terminal")
+    if not terminal or not terminal.windows():
+        return None
+
+    front_window = terminal.windows()[0]
+    selected_tab = front_window.selectedTab()
+    return _get_cwd_from_tty(selected_tab.tty())
+
+
+def get_iterm_url() -> Optional[str]:
+    """
+    Retrieves the current working directory of the frontmost iTerm2 session as a file URL.
+
+    :return: The file URL as a string, or None if not found or iTerm2 is not running.
+    """
+    iterm = get_running_app("com.googlecode.iterm2")
+    if not iterm:
+        return None
+
+    win = iterm.currentWindow()
+    if not win:
+        return None
+    
+    session = win.currentSession()
+    if not session:
+        return None
+        
+    return _get_cwd_from_tty(session.tty())
 
 
 def get_xcode_url() -> Optional[str]:
@@ -597,6 +622,8 @@ HANDLERS = {
     "Firefox": get_firefox_url,
     "Finder": get_finder_url,
     "Terminal": get_terminal_url,
+    "iTerm": get_iterm_url,
+    "iTerm2": get_iterm_url,
     "Xcode": get_xcode_url,
     "Camino": get_camino_url,
     "PyCharm": get_jetbrains_url,
