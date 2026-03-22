@@ -11,12 +11,17 @@ def _suppress_dock_icon():
     Suppresses the Python application icon in the dock for CLI scripts.
     """
     try:
-        app = AppKit.NSApplication.sharedApplication()
-        # Only suppress if it's a regular app (0) and appears to be a python script (no bundle ID or generic)
-        if app.activationPolicy() == 0:
-            bundle_id = AppKit.NSBundle.mainBundle().bundleIdentifier()
+        # Check if we are in a generic python process
+        bundle = AppKit.NSBundle.mainBundle()
+        info = bundle.infoDictionary()
+        if info:
+            bundle_id = info.get("CFBundleIdentifier")
             if not bundle_id or bundle_id.startswith("org.python."):
-                app.setActivationPolicy_(2)  # NSApplicationActivationPolicyProhibited
+                # User suggestion: set LSUIElement to "1" in infoDictionary before sharedApplication()
+                info["LSUIElement"] = "1"
+                app = AppKit.NSApplication.sharedApplication()
+                # NSApplicationActivationPolicyAccessory = 1
+                app.setActivationPolicy_(1)
     except Exception:
         pass
 
