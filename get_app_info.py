@@ -69,9 +69,9 @@ def normalize_text(text: str) -> str:
 
 
 def _get_app_info_mac():
-    try:
+    if __package__:
         from . import mac
-    except ImportError:
+    else:
         import mac
     appname, windowtitle = mac.get_frontmost_app_info()
     appname = normalize_text(appname)
