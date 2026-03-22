@@ -352,6 +352,52 @@ def get_zotero_url(app_name: str, window_title: str) -> Optional[str]:
     return result
 
 
+def get_slack_url() -> Optional[str]:
+    """
+    Retrieves the URL of the current Slack channel from the AXWebArea element.
+
+    :return: The URL as a string, or None if not found or Slack is not running.
+    """
+    import ApplicationServices
+
+    slack = get_running_app("com.tinyspeck.slackmacgap")
+    if not slack:
+        return None
+
+    # Slack is an Electron app, it often exposes the URL in an AXWebArea element
+    # We need to find it recursively in the focused window
+    workspace = AppKit.NSWorkspace.sharedWorkspace()
+    for app in workspace.runningApplications():
+        if app.bundleIdentifier() == "com.tinyspeck.slackmacgap":
+            pid = app.processIdentifier()
+            app_ref = ApplicationServices.AXUIElementCreateApplication(pid)
+            error, window = ApplicationServices.AXUIElementCopyAttributeValue(app_ref, "AXFocusedWindow", None)
+            if error == 0:
+                return _find_ax_web_area_url(window)
+    return None
+
+
+def _find_ax_web_area_url(element, depth=0, max_depth=15) -> Optional[str]:
+    if depth > max_depth:
+        return None
+
+    import ApplicationServices
+
+    error, role = ApplicationServices.AXUIElementCopyAttributeValue(element, "AXRole", None)
+    if error == 0 and role == "AXWebArea":
+        error, url = ApplicationServices.AXUIElementCopyAttributeValue(element, "AXURL", None)
+        if error == 0 and url:
+            return str(url)
+
+    error, children = ApplicationServices.AXUIElementCopyAttributeValue(element, "AXChildren", None)
+    if error == 0 and children:
+        for child in children:
+            res = _find_ax_web_area_url(child, depth + 1, max_depth)
+            if res:
+                return res
+    return None
+
+
 HANDLERS = {
     "Google Chrome": get_chrome_url,
     "Safari": get_safari_url,
@@ -373,4 +419,5 @@ HANDLERS = {
     "Android Studio": get_jetbrains_url,
     "Zotero": get_zotero_url,
     "zotero": get_zotero_url,
+    "Slack": get_slack_url,
 }
