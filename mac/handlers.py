@@ -268,7 +268,7 @@ def get_jetbrains_url(app_name: str, window_title: str) -> Optional[str]:
                                 break
                 if path:
                     break
-            except Exception:
+            except (IOError, ET.ParseError):
                 continue
 
     if path:
