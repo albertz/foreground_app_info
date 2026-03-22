@@ -57,12 +57,25 @@ def resolve_macos_container_path(localfn: str) -> str:
     return localfn
 
 
+def normalize_text(text: str) -> str:
+    """
+    Cleans up the text by stripping invisible characters like the Left-to-Right Mark (\\u200e)
+    which is often present in localized application names (e.g., WhatsApp).
+    """
+    if not text:
+        return ""
+    # Strip LRM (\u200e) and whitespace
+    return text.replace("\u200e", "").strip()
+
+
 def _get_app_info_mac():
     try:
         from . import mac
     except ImportError:
         import mac
     appname, windowtitle = mac.get_frontmost_app_info()
+    appname = normalize_text(appname)
+    windowtitle = normalize_text(windowtitle)
     idletime = mac.get_idle_time()
     url = mac.get_app_url(appname, windowtitle)
 
