@@ -2,7 +2,10 @@ import glob
 import json
 import os
 import re
+import shutil
+import sqlite3
 import subprocess
+import tempfile
 import xml.etree.ElementTree as ET
 from typing import Any, Optional
 
@@ -247,6 +250,83 @@ def get_jetbrains_url(app_name: str, window_title: str) -> Optional[str]:
     return None
 
 
+def get_zotero_url(app_name: str, window_title: str) -> Optional[str]:
+    """
+    Retrieves the file URL for a Zotero item by matching the window title against the database.
+
+    :param app_name: The name of the application.
+    :param window_title: The current window title.
+    :return: The file URL as a string, or None if not found.
+    """
+    if not window_title.endswith(" - Zotero"):
+        return None
+
+    title_part = window_title[:-9]
+    zotero_db = os.path.expanduser("~/Zotero/zotero.sqlite")
+    if not os.path.exists(zotero_db):
+        return None
+
+    # Connect to a copy of the database to avoid locking issues
+    with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tmp:
+        tmp_name = tmp.name
+    try:
+        shutil.copy2(zotero_db, tmp_name)
+        conn = sqlite3.connect(tmp_name)
+        cur = conn.cursor()
+
+        # Search for any item whose title matches the window title part
+        query = """
+        SELECT i.itemID, idv.value
+        FROM items i
+        JOIN itemData id ON i.itemID = id.itemID
+        JOIN fields f ON id.fieldID = f.fieldID
+        JOIN itemDataValues idv ON id.valueID = idv.valueID
+        WHERE f.fieldName = 'title'
+        """
+        cur.execute(query)
+        all_items = cur.fetchall()
+
+        matching_item_id = None
+        for item_id, item_title in all_items:
+            if item_title and (item_title in title_part or title_part in item_title):
+                matching_item_id = item_id
+                break
+
+        if not matching_item_id:
+            # Fallback: search in attachments
+            query = "SELECT i.key, ia.path FROM items i JOIN itemAttachments ia ON i.itemID = ia.itemID"
+            cur.execute(query)
+            all_attachments = cur.fetchall()
+            for key, path in all_attachments:
+                if path and path.endswith(".pdf"):
+                    clean_path = path[len("storage:"):] if path.startswith("storage:") else path
+                    if clean_path in title_part:
+                        return "file://" + os.path.expanduser(f"~/Zotero/storage/{key}/{clean_path}")
+
+        if matching_item_id:
+            query = """
+            SELECT i.key, ia.path
+            FROM items i
+            JOIN itemAttachments ia ON i.itemID = ia.itemID
+            WHERE ia.parentItemID = ? AND ia.contentType = 'application/pdf'
+            """
+            cur.execute(query, (matching_item_id,))
+            attachment = cur.fetchone()
+            if attachment:
+                key, path = attachment
+                if path and path.startswith("storage:"):
+                    filename = path[len("storage:"):]
+                    return "file://" + os.path.expanduser(f"~/Zotero/storage/{key}/{filename}")
+                elif path:
+                    return "file://" + os.path.expanduser(path)
+        conn.close()
+    finally:
+        if os.path.exists(tmp_name):
+            os.remove(tmp_name)
+
+    return None
+
+
 HANDLERS = {
     "Google Chrome": get_chrome_url,
     "Safari": get_safari_url,
@@ -266,4 +346,6 @@ HANDLERS = {
     "DataGrip": get_jetbrains_url,
     "Rider": get_jetbrains_url,
     "Android Studio": get_jetbrains_url,
+    "Zotero": get_zotero_url,
+    "zotero": get_zotero_url,
 }
