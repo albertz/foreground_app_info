@@ -75,6 +75,8 @@ def _get_app_info_mac():
         import mac
     appname, windowtitle = mac.get_frontmost_app_info()
     appname = normalize_text(appname)
+    if appname == "Steam Helper":
+        appname = "Steam"
     windowtitle = normalize_text(windowtitle)
     idletime = mac.get_idle_time()
     url = mac.get_app_url(appname, windowtitle)

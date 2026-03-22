@@ -477,6 +477,60 @@ def get_spotify_url() -> Optional[str]:
     return current_track.spotifyUrl()
 
 
+def get_steam_url() -> Optional[str]:
+    """
+    Retrieves the current Steam URL by querying its internal Chromium history database.
+
+    :return: The latest URL from Steam's history, or None if not found or no recent activity.
+    """
+    import ApplicationServices
+
+    helper_bundle = "com.valvesoftware.steam.helper"
+    if not is_app_running(helper_bundle):
+        return None
+
+    # Only query history if a Steam window is actually focused
+    workspace = AppKit.NSWorkspace.sharedWorkspace()
+    steam_focused = False
+    for app in workspace.runningApplications():
+        if app.bundleIdentifier() == helper_bundle:
+            pid = app.processIdentifier()
+            app_ref = ApplicationServices.AXUIElementCreateApplication(pid)
+            error, window = ApplicationServices.AXUIElementCopyAttributeValue(app_ref, "AXFocusedWindow", None)
+            if error == 0 and window:
+                steam_focused = True
+                break
+    
+    if not steam_focused:
+        return None
+
+    history_db = os.path.expanduser("~/Library/Application Support/Steam/config/htmlcache/Default/History")
+    if not os.path.exists(history_db):
+        return None
+
+    # Connect to a copy of the database to avoid locking issues
+    with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tmp:
+        tmp_name = tmp.name
+    
+    result = None
+    try:
+        shutil.copy2(history_db, tmp_name)
+        conn = sqlite3.connect(tmp_name)
+        cur = conn.cursor()
+        # Chromium uses WebKit/Google Chrome style history
+        query = "SELECT url FROM urls ORDER BY last_visit_time DESC LIMIT 1"
+        cur.execute(query)
+        row = cur.fetchone()
+        if row:
+            result = row[0]
+        conn.close()
+    finally:
+        if os.path.exists(tmp_name):
+            os.remove(tmp_name)
+
+    return result
+
+
 HANDLERS = {
     "Google Chrome": get_chrome_url,
     "Safari": get_safari_url,
@@ -500,4 +554,5 @@ HANDLERS = {
     "zotero": get_zotero_url,
     "Slack": get_slack_url,
     "Spotify": get_spotify_url,
+    "Steam": get_steam_url,
 }
