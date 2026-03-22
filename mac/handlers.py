@@ -13,6 +13,18 @@ import AppKit
 import ScriptingBridge
 
 
+def _get_actual_bundle_id(bundle_id: str) -> Optional[str]:
+    """
+    Finds the actual bundle identifier of a running application case-insensitively.
+    """
+    apps = AppKit.NSWorkspace.sharedWorkspace().runningApplications()
+    return next(
+        (app.bundleIdentifier() for app in apps 
+         if app.bundleIdentifier() and app.bundleIdentifier().lower() == bundle_id.lower()), 
+        None
+    )
+
+
 def is_app_running(bundle_id: str) -> bool:
     """
     Checks if an application with the given bundle identifier is currently running.
@@ -20,7 +32,7 @@ def is_app_running(bundle_id: str) -> bool:
     :param bundle_id: The application bundle identifier (e.g., "com.google.Chrome").
     :return: True if the app is running, False otherwise.
     """
-    return get_running_app(bundle_id) is not None
+    return _get_actual_bundle_id(bundle_id) is not None
 
 
 def get_running_app(bundle_id: str) -> Optional[Any]:
@@ -30,12 +42,7 @@ def get_running_app(bundle_id: str) -> Optional[Any]:
     :param bundle_id: The application bundle identifier.
     :return: The SBApplication object if the app is running, otherwise None.
     """
-    apps = AppKit.NSWorkspace.sharedWorkspace().runningApplications()
-    actual_bundle_id = next(
-        (app.bundleIdentifier() for app in apps 
-         if app.bundleIdentifier() and app.bundleIdentifier().lower() == bundle_id.lower()), 
-        None
-    )
+    actual_bundle_id = _get_actual_bundle_id(bundle_id)
     if not actual_bundle_id:
         return None
     return ScriptingBridge.SBApplication.applicationWithBundleIdentifier_(actual_bundle_id)
@@ -365,8 +372,7 @@ def get_slack_url() -> Optional[str]:
     """
     import ApplicationServices
 
-    slack = get_running_app("com.tinyspeck.slackmacgap")
-    if not slack:
+    if not is_app_running("com.tinyspeck.slackmacgap"):
         return None
 
     # Slack is an Electron app, it often exposes the URL in an AXWebArea element
