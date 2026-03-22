@@ -182,51 +182,152 @@ def _get_cwd_from_tty(tty: str) -> Optional[str]:
     res = subprocess.run(["fuser", tty], capture_output=True, text=True, check=False).stdout.strip()
     pids = res.split()
     if pids:
-        pid = pids[0]
-        # lsof might also fail if process just exited
-        res = subprocess.run(
-            ["lsof", "-a", "-p", pid, "-d", "cwd", "-n", "-Fn"], capture_output=True, text=True, check=False
-        ).stdout
-        for line in res.splitlines():
-            if line.startswith("n"):
-                return "file://" + line[1:]
+        pid = int(pids[0])
+        cwd = _get_cwd_from_pid(pid)
+        if cwd:
+            return "file://" + cwd
     return None
 
 
-def get_terminal_url() -> Optional[str]:
+def get_terminal_url(app_name: str, window_title: str) -> Optional[str]:
     """
     Retrieves the current working directory of the frontmost Terminal tab as a file URL.
 
+    :param app_name: The name of the application.
+    :param window_title: The current window title.
     :return: The file URL as a string, or None if not found or Terminal is not running.
     """
     terminal = get_running_app("com.apple.Terminal")
-    if not terminal or not terminal.windows():
-        return None
+    if terminal and terminal.windows():
+        front_window = terminal.windows()[0]
+        selected_tab = front_window.selectedTab()
+        return _get_cwd_from_tty(selected_tab.tty())
+    return None
 
-    front_window = terminal.windows()[0]
-    selected_tab = front_window.selectedTab()
-    return _get_cwd_from_tty(selected_tab.tty())
 
-
-def get_iterm_url() -> Optional[str]:
+def get_iterm_url(app_name: str, window_title: str) -> Optional[str]:
     """
     Retrieves the current working directory of the frontmost iTerm2 session as a file URL.
 
+    :param app_name: The name of the application.
+    :param window_title: The current window title.
     :return: The file URL as a string, or None if not found or iTerm2 is not running.
     """
-    iterm = get_running_app("com.googlecode.iterm2")
-    if not iterm:
+    bundle_id = "com.googlecode.iterm2"
+    iterm = get_running_app(bundle_id)
+    if iterm:
+        win = iterm.currentWindow()
+        if win:
+            session = win.currentSession()
+            if session:
+                tty = session.tty()
+                if tty:
+                    return _get_cwd_from_tty(tty)
+
+    # Fallback for restricted automation or if ScriptingBridge fails
+    workspace = AppKit.NSWorkspace.sharedWorkspace()
+    iterm_pid = None
+    for app in workspace.runningApplications():
+        if app.bundleIdentifier() == bundle_id:
+            iterm_pid = app.processIdentifier()
+            break
+    
+    if iterm_pid:
+        # iTerm2 often uses iTermServer as a child or sibling.
+        pids_to_check = [iterm_pid]
+        res = subprocess.run(["ps", "-ax", "-o", "pid,command"], capture_output=True, text=True, check=False).stdout
+        for line in res.splitlines():
+            if "iTermServer" in line:
+                parts = line.strip().split()
+                if parts:
+                    pids_to_check.append(int(parts[0]))
+
+        for pid in set(pids_to_check):
+            cwd = _get_cwd_from_descendants(pid, window_title)
+            if cwd:
+                return cwd
+
+    return None
+
+
+def _get_cwd_from_descendants(root_pid: int, window_title: str) -> Optional[str]:
+    """
+    Finds descendant shell processes and retrieves the CWD of the most likely active one.
+    """
+    descendants = _get_all_children_recursive(root_pid)
+    candidates = []
+    for pid in descendants:
+        comm = subprocess.run(["ps", "-p", str(pid), "-o", "comm="], capture_output=True, text=True, check=False).stdout.strip()
+        if not comm:
+            continue
+        if any(shell in comm.lower() for shell in ["fish", "zsh", "bash", "sh"]):
+            cwd = _get_cwd_from_pid(pid)
+            if cwd:
+                candidates.append(cwd)
+    
+    if not candidates:
         return None
 
-    win = iterm.currentWindow()
-    if not win:
-        return None
-    
-    session = win.currentSession()
-    if not session:
-        return None
+    # Score candidates based on window_title
+    # Common iTerm title formats: "dir (-shell)", "user@host: dir", or just "dir"
+    best_cwd = None
+    max_score = -1
+
+    for cwd in set(candidates):
+        score = 0
+        norm_cwd = cwd.lower()
+        norm_title = window_title.lower()
         
-    return _get_cwd_from_tty(session.tty())
+        # Exact match or home match
+        if window_title == "~" and cwd == os.path.expanduser("~"):
+            score = 100
+        elif norm_title == os.path.basename(cwd).lower():
+            score = 90
+        elif norm_title.startswith(os.path.basename(cwd).lower()):
+            score = 80
+        elif os.path.basename(cwd).lower() in norm_title:
+            score = 70
+        
+        if score > max_score:
+            max_score = score
+            best_cwd = cwd
+            
+    # If no clear match based on title, return the one with the longest path
+    # (heuristic: deeper directories are more likely to be active projects)
+    if max_score <= 0:
+        best_cwd = max(candidates, key=len)
+
+    return "file://" + best_cwd
+
+
+def _get_all_children_recursive(pid: int) -> List[int]:
+    """
+    Recursively finds all child process PIDs for a given PID.
+    """
+    res = subprocess.run(["pgrep", "-P", str(pid)], capture_output=True, text=True, check=False).stdout
+    pids = []
+    for p in res.splitlines():
+        p = p.strip()
+        if p.isdigit():
+            pids.append(int(p))
+
+    all_pids = list(pids)
+    for p in pids:
+        all_pids.extend(_get_all_children_recursive(p))
+    return all_pids
+
+
+def _get_cwd_from_pid(pid: int) -> Optional[str]:
+    """
+    Retrieves the current working directory of a process by its PID.
+    """
+    res = subprocess.run(
+        ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-n", "-Fn"], capture_output=True, text=True, check=False
+    ).stdout
+    for line in res.splitlines():
+        if line.startswith("n"):
+            return line[1:]
+    return None
 
 
 def get_xcode_url() -> Optional[str]:
@@ -578,19 +679,6 @@ def get_kitty_url(app_name: str, window_title: str) -> Optional[str]:
     
     if not kitty_pid:
         return None
-
-    def _get_all_children_recursive(pid: int) -> List[int]:
-        res = subprocess.run(["pgrep", "-P", str(pid)], capture_output=True, text=True, check=False).stdout
-        pids = []
-        for p in res.splitlines():
-            p = p.strip()
-            if p.isdigit():
-                pids.append(int(p))
-        
-        all_pids = list(pids)
-        for p in pids:
-            all_pids.extend(_get_all_children_recursive(p))
-        return all_pids
 
     child_pids = _get_all_children_recursive(kitty_pid)
     for pid in child_pids:
