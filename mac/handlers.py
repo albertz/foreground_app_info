@@ -460,6 +460,23 @@ def _find_ax_web_area_url(element, depth=0, max_depth=15) -> Optional[str]:
     return None
 
 
+def get_spotify_url() -> Optional[str]:
+    """
+    Retrieves the URI of the current track in Spotify using ScriptingBridge.
+
+    :return: The Spotify URI as a string (e.g., spotify:track:...), or None if not found or Spotify is not running.
+    """
+    spotify = get_running_app("com.spotify.client")
+    if not spotify:
+        return None
+
+    current_track = spotify.currentTrack()
+    if not current_track:
+        return None
+        
+    return current_track.spotifyUrl()
+
+
 HANDLERS = {
     "Google Chrome": get_chrome_url,
     "Safari": get_safari_url,
@@ -482,4 +499,5 @@ HANDLERS = {
     "Zotero": get_zotero_url,
     "zotero": get_zotero_url,
     "Slack": get_slack_url,
+    "Spotify": get_spotify_url,
 }
