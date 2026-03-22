@@ -79,10 +79,13 @@ def get_safari_url() -> Optional[str]:
     return None
 
 
-def get_firefox_url() -> Optional[str]:
+def get_firefox_url(app_name: str, window_title: str) -> Optional[str]:
     """
-    Retrieves the URL of the active tab in Firefox by reading its session store.
+    Retrieves the URL of the active tab in Firefox by reading its session store
+    and matching the window title.
 
+    :param app_name: The name of the application.
+    :param window_title: The current window title.
     :return: The URL as a string, or None if not found.
     """
     sessionfns = []
@@ -122,23 +125,36 @@ def get_firefox_url() -> Optional[str]:
                 # Very old Firefox used a format that was sometimes valid Python but not JSON
                 s = eval(content, {"false": False, "true": True, "null": None})
 
-    selectedWindow = s.get("selectedWindow", 1)
-    windows = s.get("windows", [])
-    if not windows or selectedWindow > len(windows):
-        return None
+    # Try to find a tab matching the window title
+    # Firefox window title is usually just the tab title
+    best_tab = None
+    latest_timestamp = -1
 
-    w = windows[selectedWindow - 1]
-    selectedTab = w.get("selected", 1)
-    tabs = w.get("tabs", [])
-    if not tabs or selectedTab > len(tabs):
-        return None
+    for w in s.get("windows", []):
+        for t in w.get("tabs", []):
+            entries = t.get("entries", [])
+            if not entries:
+                continue
+            
+            tab_title = entries[-1].get("title")
+            timestamp = t.get("lastAccessed", 0)
+            
+            # Match by title if possible
+            if tab_title and tab_title == window_title:
+                # Found exact match
+                return entries[-1].get("url")
+            
+            # Keep track of latest tab as fallback
+            if timestamp > latest_timestamp:
+                latest_timestamp = timestamp
+                best_tab = t
 
-    t = tabs[selectedTab - 1]
-    entries = t.get("entries", [])
-    if not entries:
-        return None
+    if best_tab:
+        entries = best_tab.get("entries", [])
+        if entries:
+            return entries[-1].get("url")
 
-    return entries[-1].get("url")
+    return None
 
 
 def get_finder_url() -> Optional[str]:
