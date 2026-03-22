@@ -11,6 +11,7 @@ from typing import Any, Optional
 
 import AppKit
 import ScriptingBridge
+import lz4.block
 
 
 def _get_actual_bundle_id(bundle_id: str) -> Optional[str]:
@@ -84,47 +85,60 @@ def get_firefox_url() -> Optional[str]:
 
     :return: The URL as a string, or None if not found.
     """
-    try:
-        sessionfns = []
-        profile_path = os.path.expanduser("~") + "/Library/Application Support/Firefox/Profiles/*"
-        for sessionfn in glob.glob(profile_path + "/sessionstore.js"):
+    sessionfns = []
+    profile_path = os.path.expanduser("~") + "/Library/Application Support/Firefox/Profiles/*"
+    # Modern Firefox uses .jsonlz4, older used .js
+    patterns = [
+        "/sessionstore.js",
+        "/sessionstore.jsonlz4",
+        "/sessionstore-backups/recovery.jsonlz4",
+        "/sessionstore-backups/recovery.js",
+    ]
+    for pattern in patterns:
+        for sessionfn in glob.glob(profile_path + pattern):
             sessionfns += [(os.stat(sessionfn).st_mtime, sessionfn)]
-        for sessionfn in glob.glob(profile_path + "/sessionstore-backups/recovery.jsonlz4"):
-            sessionfns += [(os.stat(sessionfn).st_mtime, sessionfn)]
 
-        if not sessionfns:
-            return None
+    if not sessionfns:
+        return None
 
-        sessionfn = max(sessionfns)[1]
-        if sessionfn.endswith(".jsonlz4"):
-            return None
+    # Take the most recently modified session store
+    sessionfn = max(sessionfns)[1]
 
+    if sessionfn.endswith(".jsonlz4"):
+        with open(sessionfn, "rb") as f:
+            header = f.read(8)
+            if header != b"mozLz40\0":
+                return None
+            uncompressed_size = int.from_bytes(f.read(4), byteorder="little")
+            compressed_data = f.read()
+            content = lz4.block.decompress(compressed_data, uncompressed_size=uncompressed_size)
+            s = json.loads(content)
+    else:
         with open(sessionfn, "r") as f:
             content = f.read()
             try:
                 s = json.loads(content)
             except json.JSONDecodeError:
+                # Very old Firefox used a format that was sometimes valid Python but not JSON
                 s = eval(content, {"false": False, "true": True, "null": None})
 
-        selectedWindow = s.get("selectedWindow", 1)
-        windows = s.get("windows", [])
-        if not windows or selectedWindow > len(windows):
-            return None
+    selectedWindow = s.get("selectedWindow", 1)
+    windows = s.get("windows", [])
+    if not windows or selectedWindow > len(windows):
+        return None
 
-        w = windows[selectedWindow - 1]
-        selectedTab = w.get("selected", 1)
-        tabs = w.get("tabs", [])
-        if not tabs or selectedTab > len(tabs):
-            return None
+    w = windows[selectedWindow - 1]
+    selectedTab = w.get("selected", 1)
+    tabs = w.get("tabs", [])
+    if not tabs or selectedTab > len(tabs):
+        return None
 
-        t = tabs[selectedTab - 1]
-        entries = t.get("entries", [])
-        if not entries:
-            return None
+    t = tabs[selectedTab - 1]
+    entries = t.get("entries", [])
+    if not entries:
+        return None
 
-        return entries[-1].get("url")
-    except Exception:
-        raise
+    return entries[-1].get("url")
 
 
 def get_finder_url() -> Optional[str]:
