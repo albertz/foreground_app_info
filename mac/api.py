@@ -3,20 +3,7 @@ import Quartz
 import ApplicationServices
 from typing import Tuple
 from .handlers import HANDLERS
-
-_did_setup = False
-
-
-def _setup():
-    global _did_setup
-    if _did_setup:
-        return
-    # Prevent the Python icon from appearing in the Dock
-    info = AppKit.NSBundle.mainBundle().infoDictionary()
-    if info:
-        info["LSUIElement"] = "1"
-    AppKit.NSApplication.sharedApplication().setActivationPolicy_(1)
-    _did_setup = True
+from Foundation import NSRunLoop, NSDate
 
 
 def get_frontmost_app_info() -> Tuple[str, str]:
@@ -25,30 +12,49 @@ def get_frontmost_app_info() -> Tuple[str, str]:
 
     :return: A tuple (app_name, window_title).
     """
-    _setup()
-    workspace = AppKit.NSWorkspace.sharedWorkspace()
-    front_app = workspace.frontmostApplication()
-    if not front_app:
-        return "", ""
+    # Tick run loop to allow NSWorkspace to update
+    NSRunLoop.currentRunLoop().runUntilDate_(NSDate.dateWithTimeIntervalSinceNow_(0.1))
 
-    app_name = front_app.localizedName()
-    pid = front_app.processIdentifier()
-
-    # Get window title using Quartz Window Services
-    window_title = ""
+    # Get window list using Quartz Window Services to find frontmost PID
     options = Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements
     window_list = Quartz.CGWindowListCopyWindowInfo(options, Quartz.kCGNullWindowID)
 
+    pid = -1
+    window_title = ""
     if window_list:
         for window in window_list:
-            if window.get("kCGWindowOwnerPID") == pid:
-                if window.get("kCGWindowLayer") == 0:
-                    window_title = window.get("kCGWindowName", "")
-                    if window_title:
-                        break
+            if window.get("kCGWindowLayer") == 0:
+                pid = window.get("kCGWindowOwnerPID")
+                window_title = window.get("kCGWindowName", "")
+                if pid is not None:
+                    break
+
+    workspace = AppKit.NSWorkspace.sharedWorkspace()
+    app_name = ""
+    if pid != -1:
+        for app in workspace.runningApplications():
+            if app.processIdentifier() == pid:
+                app_name = app.localizedName()
+                break
+        if not app_name:
+            app_name = f"PID {pid}"
+    else:
+        # Fallback to NSWorkspace
+        front_app = workspace.frontmostApplication()
+        if front_app:
+            app_name = front_app.localizedName()
+            pid = front_app.processIdentifier()
+        else:
+            active_app = workspace.activeApplication()
+            if active_app:
+                app_name = active_app.get("NSApplicationName", "")
+                pid = active_app.get("NSApplicationProcessIdentifier", -1)
+
+    if not app_name:
+        return "", ""
 
     # If Quartz didn't give a title, try Accessibility API as fallback
-    if not window_title:
+    if not window_title and pid != -1:
         app_ref = ApplicationServices.AXUIElementCreateApplication(pid)
         if app_ref:
             error, focused_window = ApplicationServices.AXUIElementCopyAttributeValue(app_ref, "AXFocusedWindow", None)
