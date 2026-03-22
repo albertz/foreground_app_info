@@ -1,7 +1,9 @@
 import glob
 import json
 import os
+import re
 import subprocess
+import xml.etree.ElementTree as ET
 from typing import Any, Optional
 
 import AppKit
@@ -176,6 +178,75 @@ def get_camino_url() -> Optional[str]:
     return None
 
 
+def get_jetbrains_url(app_name: str, window_title: str) -> Optional[str]:
+    """
+    Retrieves the file URL for a JetBrains IDE (PyCharm, IntelliJ, etc.) by parsing its window title
+    and matching it against recent projects.
+
+    :param app_name: The name of the application.
+    :param window_title: The current window title.
+    :return: The file URL as a string, or None if not found.
+    """
+    # Separator can be " – " (en dash), " — " (em dash), or " - " (hyphen)
+    parts = re.split(r" [–—-] ", window_title, 1)
+    if len(parts) < 2:
+        return None
+
+    project_name = parts[0].strip()
+    file_part = parts[1].strip()
+
+    # Sometimes the title has [ProjectName] at the end
+    if " [" in file_part:
+        file_part = file_part.split(" [")[0].strip()
+
+    path = None
+    if file_part.startswith("/") or file_part.startswith("~"):
+        path = os.path.expanduser(file_part)
+    else:
+        # Use recentProjects.xml trick
+        jetbrains_dir = os.path.expanduser("~/Library/Application Support/JetBrains")
+        # Find the most recent recentProjects.xml across all JetBrains products
+        recent_projects_files = glob.glob(os.path.join(jetbrains_dir, "*", "options", "recentProjects.xml"))
+        
+        # Sort by mtime to check newest first
+        recent_projects_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+
+        for recent_projects_file in recent_projects_files:
+            try:
+                tree = ET.parse(recent_projects_file)
+                root = tree.getroot()
+                for entry in root.findall(".//entry"):
+                    key = entry.get("key")
+                    if not key:
+                        continue
+
+                    # Check if it's the opened project
+                    value = entry.find("value")
+                    if value is not None:
+                        meta = value.find("RecentProjectMetaInfo")
+                        if meta is not None and meta.get("opened") == "true":
+                            project_path = key.replace("$USER_HOME$", os.path.expanduser("~"))
+                            if os.path.basename(project_path) == project_name:
+                                # Found the project path
+                                potential_path = os.path.join(project_path, file_part)
+                                if os.path.exists(potential_path):
+                                    path = potential_path
+                                else:
+                                    # Try to find it in the project (might be a relative path)
+                                    # We don't do a full search to avoid performance issues
+                                    # but we check if file_part is a suffix of any file in lsof
+                                    path = project_path
+                                break
+                if path:
+                    break
+            except Exception:
+                continue
+
+    if path:
+        return "file://" + path
+    return None
+
+
 HANDLERS = {
     "Google Chrome": get_chrome_url,
     "Safari": get_safari_url,
@@ -184,4 +255,15 @@ HANDLERS = {
     "Terminal": get_terminal_url,
     "Xcode": get_xcode_url,
     "Camino": get_camino_url,
+    "PyCharm": get_jetbrains_url,
+    "IntelliJ IDEA": get_jetbrains_url,
+    "WebStorm": get_jetbrains_url,
+    "CLion": get_jetbrains_url,
+    "PHPStorm": get_jetbrains_url,
+    "GoLand": get_jetbrains_url,
+    "RubyMine": get_jetbrains_url,
+    "AppCode": get_jetbrains_url,
+    "DataGrip": get_jetbrains_url,
+    "Rider": get_jetbrains_url,
+    "Android Studio": get_jetbrains_url,
 }

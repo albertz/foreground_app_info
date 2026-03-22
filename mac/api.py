@@ -87,7 +87,13 @@ def get_app_url(app_name: str, window_title: str) -> str:
     """
     handler = HANDLERS.get(app_name)
     if handler:
-        res = handler()
+        import inspect
+
+        sig = inspect.signature(handler)
+        if len(sig.parameters) >= 2:
+            res = handler(app_name, window_title)
+        else:
+            res = handler()
         if res:
             return res
 
