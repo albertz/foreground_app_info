@@ -266,6 +266,7 @@ def get_zotero_url(app_name: str, window_title: str) -> Optional[str]:
     if not os.path.exists(zotero_db):
         return None
 
+    result = None
     # Connect to a copy of the database to avoid locking issues
     with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tmp:
         tmp_name = tmp.name
@@ -292,8 +293,48 @@ def get_zotero_url(app_name: str, window_title: str) -> Optional[str]:
                 matching_item_id = item_id
                 break
 
-        if not matching_item_id:
-            # Fallback: search in attachments
+        if matching_item_id:
+            # Check for DOI or URL first
+            query = """
+            SELECT f.fieldName, idv.value
+            FROM itemData id
+            JOIN fields f ON id.fieldID = f.fieldID
+            JOIN itemDataValues idv ON id.valueID = idv.valueID
+            WHERE id.itemID = ? AND f.fieldName IN ('DOI', 'url')
+            """
+            cur.execute(query, (matching_item_id,))
+            fields = dict(cur.fetchall())
+            
+            if "DOI" in fields and fields["DOI"]:
+                doi = fields["DOI"]
+                if doi.startswith("http"):
+                    result = doi
+                else:
+                    result = f"https://doi.org/{doi}"
+            
+            if not result and "url" in fields and fields["url"]:
+                result = fields["url"]
+
+            if not result:
+                # Fallback to local PDF attachment
+                query = """
+                SELECT i.key, ia.path
+                FROM items i
+                JOIN itemAttachments ia ON i.itemID = ia.itemID
+                WHERE ia.parentItemID = ? AND ia.contentType = 'application/pdf'
+                """
+                cur.execute(query, (matching_item_id,))
+                attachment = cur.fetchone()
+                if attachment:
+                    key, path = attachment
+                    if path and path.startswith("storage:"):
+                        filename = path[len("storage:"):]
+                        result = "file://" + os.path.expanduser(f"~/Zotero/storage/{key}/{filename}")
+                    elif path:
+                        result = "file://" + os.path.expanduser(path)
+        
+        if not result:
+            # Fallback: search in attachments if item not found by title
             query = "SELECT i.key, ia.path FROM items i JOIN itemAttachments ia ON i.itemID = ia.itemID"
             cur.execute(query)
             all_attachments = cur.fetchall()
@@ -301,30 +342,14 @@ def get_zotero_url(app_name: str, window_title: str) -> Optional[str]:
                 if path and path.endswith(".pdf"):
                     clean_path = path[len("storage:"):] if path.startswith("storage:") else path
                     if clean_path in title_part:
-                        return "file://" + os.path.expanduser(f"~/Zotero/storage/{key}/{clean_path}")
-
-        if matching_item_id:
-            query = """
-            SELECT i.key, ia.path
-            FROM items i
-            JOIN itemAttachments ia ON i.itemID = ia.itemID
-            WHERE ia.parentItemID = ? AND ia.contentType = 'application/pdf'
-            """
-            cur.execute(query, (matching_item_id,))
-            attachment = cur.fetchone()
-            if attachment:
-                key, path = attachment
-                if path and path.startswith("storage:"):
-                    filename = path[len("storage:"):]
-                    return "file://" + os.path.expanduser(f"~/Zotero/storage/{key}/{filename}")
-                elif path:
-                    return "file://" + os.path.expanduser(path)
+                        result = "file://" + os.path.expanduser(f"~/Zotero/storage/{key}/{clean_path}")
+                        break
         conn.close()
     finally:
         if os.path.exists(tmp_name):
             os.remove(tmp_name)
 
-    return None
+    return result
 
 
 HANDLERS = {
