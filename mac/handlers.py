@@ -20,8 +20,7 @@ def is_app_running(bundle_id: str) -> bool:
     :param bundle_id: The application bundle identifier (e.g., "com.google.Chrome").
     :return: True if the app is running, False otherwise.
     """
-    apps = AppKit.NSWorkspace.sharedWorkspace().runningApplications()
-    return any(app.bundleIdentifier() == bundle_id for app in apps)
+    return get_running_app(bundle_id) is not None
 
 
 def get_running_app(bundle_id: str) -> Optional[Any]:
@@ -31,9 +30,15 @@ def get_running_app(bundle_id: str) -> Optional[Any]:
     :param bundle_id: The application bundle identifier.
     :return: The SBApplication object if the app is running, otherwise None.
     """
-    if not is_app_running(bundle_id):
+    apps = AppKit.NSWorkspace.sharedWorkspace().runningApplications()
+    actual_bundle_id = next(
+        (app.bundleIdentifier() for app in apps 
+         if app.bundleIdentifier() and app.bundleIdentifier().lower() == bundle_id.lower()), 
+        None
+    )
+    if not actual_bundle_id:
         return None
-    return ScriptingBridge.SBApplication.applicationWithBundleIdentifier_(bundle_id)
+    return ScriptingBridge.SBApplication.applicationWithBundleIdentifier_(actual_bundle_id)
 
 
 def get_chrome_url() -> Optional[str]:
